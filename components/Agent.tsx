@@ -89,6 +89,22 @@ const Agent = ({
     }
   };
 
+  // Continuous Conversation Logic
+  useEffect(() => {
+    if (callStatus === CallStatus.ACTIVE && !isSpeaking && !isListening) {
+      const timeoutId = setTimeout(() => {
+          if (recognitionRef.current) {
+            try {
+               recognitionRef.current.start();
+            } catch (e) {
+               // Ignore errors if already started
+            }
+          }
+      }, 500); // Short delay to prevent self-hearing if using speakers
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isSpeaking, callStatus, isListening]);
+
   // Text to Speech Function
   const speak = (text: string) => {
     if (typeof window !== "undefined") {
