@@ -78,9 +78,13 @@ const Agent = ({
       const synth = window.speechSynthesis;
       const utterance = new SpeechSynthesisUtterance(text);
       
-      // Attempt to select a decent voice
+      // Attempt to select a "Luxe" female voice (often Google UK Female or similar)
       const voices = synth.getVoices();
-      const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha"));
+      const preferredVoice = voices.find(v => 
+        v.name.includes("Google UK English Female") || 
+        v.name.includes("Martha") || 
+        v.name.includes("Female")
+      );
       if (preferredVoice) utterance.voice = preferredVoice;
 
       utterance.onstart = () => setIsSpeaking(true);
@@ -156,7 +160,7 @@ const Agent = ({
             />
             {isSpeaking && <span className="animate-speak" />}
           </div>
-          <h3>AI Interviewer (Gemini)</h3>
+          <h3>AI Interviewer</h3>
           {isSpeaking && <p className="text-sm text-primary-200 animate-pulse">Speaking...</p>}
         </div>
 
