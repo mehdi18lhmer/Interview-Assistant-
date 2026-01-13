@@ -32,6 +32,10 @@ const Agent = ({
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
+  // Avatar Upload State
+  const [avatarUrl, setAvatarUrl] = useState("/user-avatar.png");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Use Vercel AI SDK for chat state management
   const { messages, append, setMessages } = useChat({
     api: "/api/chat",
@@ -71,6 +75,19 @@ const Agent = ({
       }
     }
   }, [append]);
+
+  // Handle Avatar Upload
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setAvatarUrl(url);
+    }
+  };
 
   // Text to Speech Function
   const speak = (text: string) => {
@@ -166,15 +183,36 @@ const Agent = ({
 
         {/* User Profile Card */}
         <div className="card-border">
-          <div className="card-content">
-            <Image
-              src="/user-avatar.png"
-              alt="profile-image"
-              width={120}
-              height={120}
-              className="rounded-full object-cover size-[120px]"
+          <div className="card-content relative group">
+            {/* Hidden File Input */}
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept="image/*"
+                onChange={handleFileChange}
             />
-            <h3>{userName}</h3>
+            
+            {/* Clickable Avatar */}
+            <div 
+                className="relative cursor-pointer transition-transform hover:scale-105"
+                onClick={handleAvatarClick}
+            >
+                <Image
+                  src={avatarUrl}
+                  alt="profile-image"
+                  width={120}
+                  height={120}
+                  className="rounded-full object-cover size-[120px] border-4 border-transparent group-hover:border-primary-200"
+                />
+                
+                {/* Upload Overlay Hint */}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-xs text-white font-bold">Change</span>
+                </div>
+            </div>
+            
+            <h3 className="mt-4 text-xl font-bold text-center">{userName || "Candidate"}</h3>
             {isListening && <p className="text-sm text-success-100 animate-pulse">Listening...</p>}
           </div>
         </div>
