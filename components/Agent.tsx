@@ -1,17 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useChat } from "ai/react";
 
 import { cn } from "@/lib/utils";
-import { vapi } from "@/lib/vapi.sdk";
-import { interviewer } from "@/constants";
 import { createFeedback } from "@/lib/actions/general.action";
 
 enum CallStatus {
   INACTIVE = "INACTIVE",
-  CONNECTING = "CONNECTING",
   ACTIVE = "ACTIVE",
   FINISHED = "FINISHED",
 }
@@ -31,118 +29,116 @@ const Agent = ({
 }: AgentProps) => {
   const router = useRouter();
   const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
-  const [messages, setMessages] = useState<SavedMessage[]>([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [lastMessage, setLastMessage] = useState<string>("");
+  const [isListening, setIsListening] = useState(false);
 
+  // Use Vercel AI SDK for chat state management
+  const { messages, append, setMessages } = useChat({
+    api: "/api/chat",
+    onFinish: (message) => {
+      // When AI finishes generating text, speak it
+      speak(message.content);
+    },
+  });
+
+  const recognitionRef = useRef<any>(null);
+
+  // Initialize Speech Recognition
   useEffect(() => {
-    const onCallStart = () => {
-      setCallStatus(CallStatus.ACTIVE);
-    };
+    if (typeof window !== "undefined") {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
 
-    const onCallEnd = () => {
-      setCallStatus(CallStatus.FINISHED);
-    };
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false; // Stop after one sentence/pause
+        recognition.interimResults = false;
+        recognition.lang = "en-US";
 
-    const onMessage = (message: Message) => {
-      if (message.type === "transcript" && message.transcriptType === "final") {
-        const newMessage = { role: message.role, content: message.transcript };
-        setMessages((prev) => [...prev, newMessage]);
+        recognition.onstart = () => setIsListening(true);
+        recognition.onend = () => setIsListening(false);
+
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          if (transcript) {
+            // Send user speech to Gemini
+            append({ role: "user", content: transcript });
+          }
+        };
+
+        recognitionRef.current = recognition;
       }
-    };
-
-    const onSpeechStart = () => {
-      console.log("speech start");
-      setIsSpeaking(true);
-    };
-
-    const onSpeechEnd = () => {
-      console.log("speech end");
-      setIsSpeaking(false);
-    };
-
-    const onError = (error: Error) => {
-      console.log("Error:", error);
-    };
-
-    vapi.on("call-start", onCallStart);
-    vapi.on("call-end", onCallEnd);
-    vapi.on("message", onMessage);
-    vapi.on("speech-start", onSpeechStart);
-    vapi.on("speech-end", onSpeechEnd);
-    vapi.on("error", onError);
-
-    return () => {
-      vapi.off("call-start", onCallStart);
-      vapi.off("call-end", onCallEnd);
-      vapi.off("message", onMessage);
-      vapi.off("speech-start", onSpeechStart);
-      vapi.off("speech-end", onSpeechEnd);
-      vapi.off("error", onError);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (messages.length > 0) {
-      setLastMessage(messages[messages.length - 1].content);
     }
+  }, [append]);
 
-    const handleGenerateFeedback = async (messages: SavedMessage[]) => {
-      console.log("handleGenerateFeedback");
+  // Text to Speech Function
+  const speak = (text: string) => {
+    if (typeof window !== "undefined") {
+      const synth = window.speechSynthesis;
+      const utterance = new SpeechSynthesisUtterance(text);
+      
+      // Attempt to select a decent voice
+      const voices = synth.getVoices();
+      const preferredVoice = voices.find(v => v.name.includes("Google US English") || v.name.includes("Samantha"));
+      if (preferredVoice) utterance.voice = preferredVoice;
 
+      utterance.onstart = () => setIsSpeaking(true);
+      utterance.onend = () => setIsSpeaking(false);
+      
+      synth.speak(utterance);
+    }
+  };
+
+  const startInterview = () => {
+    setCallStatus(CallStatus.ACTIVE);
+    
+    // Initial greeting based on context
+    const initialMessage = `Hello ${userName}. I'm Sarah, your interviewer today. We'll be focusing on ${type} questions. Are you ready to begin?`;
+    
+    // Add to chat history without triggering a new API call yet
+    setMessages([
+        { id: '1', role: 'assistant', content: initialMessage }
+    ]);
+    
+    speak(initialMessage);
+  };
+
+  const handleMicClick = () => {
+    if (recognitionRef.current && !isListening && !isSpeaking) {
+      recognitionRef.current.start();
+    } else if (isSpeaking) {
+        window.speechSynthesis.cancel();
+        setIsSpeaking(false);
+    }
+  };
+
+  const endInterview = async () => {
+    setCallStatus(CallStatus.FINISHED);
+    window.speechSynthesis.cancel();
+
+    // Map AI SDK messages to our storage format
+    const formattedMessages: SavedMessage[] = messages.map(m => ({
+        role: m.role as "user" | "assistant",
+        content: m.content
+    }));
+
+    if (type === "generate") {
+      router.push("/");
+    } else {
       const { success, feedbackId: id } = await createFeedback({
         interviewId: interviewId!,
         userId: userId!,
-        transcript: messages,
+        transcript: formattedMessages,
         feedbackId,
       });
 
       if (success && id) {
         router.push(`/interview/${interviewId}/feedback`);
       } else {
-        console.log("Error saving feedback");
         router.push("/");
       }
-    };
-
-    if (callStatus === CallStatus.FINISHED) {
-      if (type === "generate") {
-        router.push("/");
-      } else {
-        handleGenerateFeedback(messages);
-      }
     }
-  }, [messages, callStatus, feedbackId, interviewId, router, type, userId]);
-
-  const handleCall = async () => {
-    setCallStatus(CallStatus.CONNECTING);
-
-    if (type === "generate") {
-      await vapi.start(process.env.NEXT_PUBLIC_VAPI_WORKFLOW_ID!, {
-        variableValues: {
-          username: userName,
-          userid: userId,
-        },
-      });
-    } else {
-      let formattedQuestions = "";
-      if (questions) {
-        formattedQuestions = questions
-          .map((question) => `- ${question}`)
-          .join("\n");
-      }
-
-      await vapi.start(interviewer, {
-        variableValues: {
-          questions: formattedQuestions,
-        },
-      });
-    }
-  };
-
-  const handleDisconnect = () => {
-    setCallStatus(CallStatus.FINISHED);
-    vapi.stop();
   };
 
   return (
@@ -160,7 +156,8 @@ const Agent = ({
             />
             {isSpeaking && <span className="animate-speak" />}
           </div>
-          <h3>AI Interviewer</h3>
+          <h3>AI Interviewer (Gemini)</h3>
+          {isSpeaking && <p className="text-sm text-primary-200 animate-pulse">Speaking...</p>}
         </div>
 
         {/* User Profile Card */}
@@ -169,51 +166,48 @@ const Agent = ({
             <Image
               src="/user-avatar.png"
               alt="profile-image"
-              width={539}
-              height={539}
+              width={120}
+              height={120}
               className="rounded-full object-cover size-[120px]"
             />
             <h3>{userName}</h3>
+            {isListening && <p className="text-sm text-success-100 animate-pulse">Listening...</p>}
           </div>
         </div>
       </div>
 
-      {messages.length > 0 && (
-        <div className="transcript-border">
-          <div className="transcript">
-            <p
-              key={lastMessage}
-              className={cn(
-                "transition-opacity duration-500 opacity-0",
-                "animate-fadeIn opacity-100"
-              )}
-            >
-              {lastMessage}
-            </p>
-          </div>
+      {/* Transcript View */}
+      <div className="transcript-border mt-5 h-48 overflow-y-auto">
+        <div className="transcript flex flex-col gap-2 !items-start">
+             {messages.length === 0 && <p className="text-white/50 italic">Conversation will appear here...</p>}
+             {messages.slice(-2).map((m, i) => (
+                 <p key={i} className={cn("text-left", m.role === 'user' ? "text-primary-200" : "text-white")}>
+                     <strong>{m.role === 'user' ? 'You' : 'Sarah'}:</strong> {m.content}
+                 </p>
+             ))}
         </div>
-      )}
+      </div>
 
-      <div className="w-full flex justify-center">
-        {callStatus !== "ACTIVE" ? (
-          <button className="relative btn-call" onClick={() => handleCall()}>
-            <span
-              className={cn(
-                "absolute animate-ping rounded-full opacity-75",
-                callStatus !== "CONNECTING" && "hidden"
-              )}
-            />
-
-            <span className="relative">
-              {callStatus === "INACTIVE" || callStatus === "FINISHED"
-                ? "Call"
-                : ". . ."}
-            </span>
+      <div className="w-full flex justify-center mt-8 gap-4">
+        {callStatus === CallStatus.INACTIVE ? (
+          <button className="btn-call" onClick={startInterview}>
+            Start Interview
           </button>
+        ) : callStatus === CallStatus.ACTIVE ? (
+           <>
+            <button 
+                className={cn("btn-call !min-w-16", isListening ? "bg-red-500 hover:bg-red-600" : "bg-primary-200 hover:bg-primary-200/80")} 
+                onClick={handleMicClick}
+            >
+                {isListening ? "Listening..." : isSpeaking ? "Stop Speaking" : "Tap to Speak"}
+            </button>
+            
+            <button className="btn-disconnect" onClick={endInterview}>
+                End
+            </button>
+           </>
         ) : (
-          <button className="btn-disconnect" onClick={() => handleDisconnect()}>
-            End
-          </button>
+            <p className="text-white">Interview Finished</p>
         )}
       </div>
     </>
