@@ -1,28 +1,29 @@
-import * as admin from 'firebase-admin';
+// This file handles Firebase Admin SDK initialization without any top-level imports
+// to prevent "TypeError: Cannot read properties of undefined (reading 'prototype')" during builds.
 
-// Initialize Firebase Admin as a singleton to prevent multiple instances
-function getFirebaseAdmin() {
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  // Handle newlines in the private key correctly
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+function getFirebaseConfig() {
+  return {
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  };
+}
 
-  if (!projectId || !clientEmail || !privateKey) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('Firebase Admin environment variables are missing!');
-    }
-    // Return mock methods to prevent app crash if keys are missing
+async function getAdminInstance() {
+  const config = getFirebaseConfig();
+  
+  // Basic guard for environment variables
+  if (!config.projectId || !config.clientEmail || !config.privateKey) {
     return createMockAdmin();
   }
 
   try {
+    // Dynamic import to avoid evaluation at build time
+    const admin = await import('firebase-admin');
+    
     if (admin.apps.length === 0) {
       admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
+        credential: admin.credential.cert(config as any),
       });
     }
 
@@ -31,7 +32,7 @@ function getFirebaseAdmin() {
       db: admin.firestore(),
     };
   } catch (error) {
-    console.error('Firebase Admin initialization error:', error);
+    console.error('Failed to load Firebase Admin:', error);
     return createMockAdmin();
   }
 }
@@ -67,6 +68,20 @@ function createMockAdmin() {
   };
 }
 
-const { auth, db } = getFirebaseAdmin();
+// Proxy-based export to handle lazy initialization automatically
+export const auth = {
+  createSessionCookie: async (...args: any[]) => (await getAdminInstance()).auth.createSessionCookie(...args),
+  verifySessionCookie: async (...args: any[]) => (await getAdminInstance()).auth.verifySessionCookie(...args),
+  getUserByEmail: async (...args: any[]) => (await getAdminInstance()).auth.getUserByEmail(...args),
+} as any;
 
-export { auth, db };
+export const db = {
+  collection: (name: string) => ({
+    doc: (id: string) => ({
+      get: async () => (await getAdminInstance()).db.collection(name).doc(id).get(),
+      set: async (...args: any[]) => (await getAdminInstance()).db.collection(name).doc(id).set(...args),
+      update: async (...args: any[]) => (await getAdminInstance()).db.collection(name).doc(id).update(...args),
+    }),
+    add: async (...args: any[]) => (await getAdminInstance()).db.collection(name).add(...args),
+  }),
+} as any;
