@@ -6,7 +6,16 @@ import { redirect } from "next/navigation";
 import { isAuthenticated } from "@/lib/actions/auth.action";
 
 const Layout = async ({ children }: { children: ReactNode }) => {
-  const isUserAuthenticated = await isAuthenticated();
+  let isUserAuthenticated = false;
+
+  try {
+    isUserAuthenticated = await isAuthenticated();
+  } catch (error) {
+    console.error("Authentication check failed in Layout:", error);
+    // Be conservative: if auth check fails, treat as not authenticated
+    isUserAuthenticated = false;
+  }
+
   if (!isUserAuthenticated) redirect("/sign-in");
 
   return (

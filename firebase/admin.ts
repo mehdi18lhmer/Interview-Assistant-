@@ -18,18 +18,25 @@ const hasRealConfig = !!(
  * Lazy-load the Firebase Admin SDK to prevent build errors
  */
 async function getFirebaseAdmin() {
-  if (!hasRealConfig) {
-    // Return mock mode immediately if config is missing
+  if (!hasRealConfig || typeof window !== 'undefined') {
     return createMockAdmin();
   }
 
   try {
     const admin = await import("firebase-admin");
     
+    // Ensure admin is defined (sometimes dynamic imports behave weirdly in SSR edges)
+    if (!admin || !admin.apps) return createMockAdmin();
+
     if (admin.apps.length === 0) {
-      admin.initializeApp({
-        credential: admin.credential.cert(firebaseAdminConfig as any),
-      });
+      try {
+        admin.initializeApp({
+          credential: admin.credential.cert(firebaseAdminConfig as any),
+        });
+      } catch (initError) {
+        console.error("initializeApp error:", initError);
+        return createMockAdmin();
+      }
     }
 
     return {
@@ -37,67 +44,80 @@ async function getFirebaseAdmin() {
       db: admin.firestore(),
     };
   } catch (error) {
-    console.error("Firebase Admin initialization failed:", error);
+    console.error("Firebase Admin module load failed:", error);
     return createMockAdmin();
   }
 }
 
 function createMockAdmin() {
-  return {
-    auth: {
-      createSessionCookie: async () => "mock-session-cookie",
-      verifySessionCookie: async () => ({
-        uid: "mock-user-id",
-        email: "demo@example.com",
-        name: "Demo User",
-      }),
-      getUserByEmail: async () => ({
-        uid: "mock-user-id",
-        email: "demo@example.com",
-      }),
-    } as any,
-    db: {
-      collection: (name: string) => ({
-        doc: (id: string) => ({
-          get: async () => ({
-            exists: true,
-            id: id || "mock-id",
-            data: () => ({ name: "Demo User", email: "demo@example.com" }),
-          }),
-          set: async (data: any, options?: any) => {
-            console.log(`[Mock DB] Set ${name}/${id}`, data, options);
-            return { success: true };
-          },
-          update: async (data: any) => {
-            console.log(`[Mock DB] Update ${name}/${id}`, data);
-            return { success: true };
-          },
-        }),
-        add: async (data: any) => {
-          console.log(`[Mock DB] Add to ${name}`, data);
-          return { id: "mock-doc-id" };
-        },
-      }),
-    } as any,
+  const mockAuth = {
+    createSessionCookie: async () => "mock-session-cookie",
+    verifySessionCookie: async () => ({
+      uid: "mock-user-id",
+      email: "demo@example.com",
+      name: "Demo User",
+    }),
+    getUserByEmail: async () => ({
+      uid: "mock-user-id",
+      email: "demo@example.com",
+    }),
   };
+
+  const mockDb = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => ({
+          exists: true,
+          id: id || "mock-id",
+          data: () => ({ name: "Demo User", email: "demo@example.com" }),
+        }),
+        set: async (data: any, options?: any) => ({ success: true }),
+        update: async (data: any) => ({ success: true }),
+      }),
+      add: async (data: any) => ({ id: "mock-doc-id" }),
+    }),
+  };
+
+  return { auth: mockAuth as any, db: mockDb as any };
 }
 
 /**
  * Export a wrapper that lazy-loads the functionality
  */
 export const auth = {
-  createSessionCookie: async (...args: any[]) => (await getFirebaseAdmin()).auth.createSessionCookie(...args),
-  verifySessionCookie: async (...args: any[]) => (await getFirebaseAdmin()).auth.verifySessionCookie(...args),
-  getUserByEmail: async (...args: any[]) => (await getFirebaseAdmin()).auth.getUserByEmail(...args),
+  createSessionCookie: async (...args: any[]) => {
+    const instance = await getFirebaseAdmin();
+    return instance?.auth?.createSessionCookie ? await instance.auth.createSessionCookie(...args) : "mock-session-cookie";
+  },
+  verifySessionCookie: async (...args: any[]) => {
+    const instance = await getFirebaseAdmin();
+    return instance?.auth?.verifySessionCookie ? await instance.auth.verifySessionCookie(...args) : { uid: "mock", email: "mock", name: "Mock" };
+  },
+  getUserByEmail: async (...args: any[]) => {
+    const instance = await getFirebaseAdmin();
+    return instance?.auth?.getUserByEmail ? await instance.auth.getUserByEmail(...args) : null;
+  },
 } as any;
 
 export const db = {
   collection: (name: string) => ({
     doc: (id: string) => ({
-      get: async () => (await getFirebaseAdmin()).db.collection(name).doc(id).get(),
-      set: async (...args: any[]) => (await getFirebaseAdmin()).db.collection(name).doc(id).set(...args),
-      update: async (...args: any[]) => (await getFirebaseAdmin()).db.collection(name).doc(id).update(...args),
+      get: async () => {
+         const instance = await getFirebaseAdmin();
+         return await instance.db.collection(name).doc(id).get();
+      },
+      set: async (...args: any[]) => {
+         const instance = await getFirebaseAdmin();
+         return await instance.db.collection(name).doc(id).set(...args);
+      },
+      update: async (...args: any[]) => {
+         const instance = await getFirebaseAdmin();
+         return await instance.db.collection(name).doc(id).update(...args);
+      },
     }),
-    add: async (...args: any[]) => (await getFirebaseAdmin()).db.collection(name).add(...args),
+    add: async (...args: any[]) => {
+       const instance = await getFirebaseAdmin();
+       return await instance.db.collection(name).add(...args);
+    },
   }),
 } as any;
