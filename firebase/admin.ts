@@ -38,6 +38,16 @@ async function getAdminInstance() {
 }
 
 function createMockAdmin() {
+  const mockQuery = {
+    where: () => mockQuery,
+    orderBy: () => mockQuery,
+    limit: () => mockQuery,
+    get: async () => ({
+      empty: true,
+      docs: [],
+    }),
+  } as any;
+
   return {
     auth: {
       createSessionCookie: async () => 'mock-session-cookie',
@@ -53,6 +63,7 @@ function createMockAdmin() {
     } as any,
     db: {
       collection: (name: string) => ({
+        ...mockQuery,
         doc: (id: string) => ({
           get: async () => ({
             exists: true,
@@ -76,12 +87,36 @@ export const auth = {
 } as any;
 
 export const db = {
-  collection: (name: string) => ({
-    doc: (id: string) => ({
-      get: async () => (await getAdminInstance()).db.collection(name).doc(id).get(),
-      set: async (...args: any[]) => (await getAdminInstance()).db.collection(name).doc(id).set(...args),
-      update: async (...args: any[]) => (await getAdminInstance()).db.collection(name).doc(id).update(...args),
-    }),
-    add: async (...args: any[]) => (await getAdminInstance()).db.collection(name).add(...args),
-  }),
+  collection: (name: string) => {
+    // We return a proxy that handles the collection chain
+    const getTarget = async () => (await getAdminInstance()).db.collection(name);
+    
+    return {
+      doc: (id: string) => ({
+        get: async () => (await getTarget()).doc(id).get(),
+        set: async (...args: any[]) => (await getTarget()).doc(id).set(...args),
+        update: async (...args: any[]) => (await getTarget()).doc(id).update(...args),
+      }),
+      add: async (...args: any[]) => (await getTarget()).add(...args),
+      where: (...args: any[]) => createChainProxy(getTarget, 'where', args),
+      orderBy: (...args: any[]) => createChainProxy(getTarget, 'orderBy', args),
+      limit: (...args: any[]) => createChainProxy(getTarget, 'limit', args),
+      get: async () => (await getTarget()).get(),
+    };
+  }
 } as any;
+
+// Helper to handle Firestore chaining like .where().orderBy().limit().get()
+function createChainProxy(getTarget: () => Promise<any>, method: string, args: any[]): any {
+  const newGetTarget = async () => {
+    const target = await getTarget();
+    return target[method](...args);
+  };
+
+  return {
+    where: (...nextArgs: any[]) => createChainProxy(newGetTarget, 'where', nextArgs),
+    orderBy: (...nextArgs: any[]) => createChainProxy(newGetTarget, 'orderBy', nextArgs),
+    limit: (...nextArgs: any[]) => createChainProxy(newGetTarget, 'limit', nextArgs),
+    get: async () => (await newGetTarget()).get(),
+  };
+}
