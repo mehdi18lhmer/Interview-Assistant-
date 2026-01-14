@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { useChat } from "ai/react";
+import Vapi from "@vapi-ai/web";
 
 import { cn } from "@/lib/utils";
 import { createFeedback } from "@/lib/actions/general.action";
@@ -31,50 +31,75 @@ const Agent = ({
   const [callStatus, setCallStatus] = useState<CallStatus>(CallStatus.INACTIVE);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState<SavedMessage[]>([]);
 
   // Avatar Upload State
   const [avatarUrl, setAvatarUrl] = useState("/user-avatar.png");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Use Vercel AI SDK for chat state management
-  const { messages, append, setMessages } = useChat({
-    api: "/api/chat",
-    onFinish: (message) => {
-      // When AI finishes generating text, speak it
-      speak(message.content);
-    },
-  });
+  // Vapi Instance
+  const vapiRef = useRef<Vapi | null>(null);
 
-  const recognitionRef = useRef<any>(null);
-
-  // Initialize Speech Recognition
+  // Initialize Vapi
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
+    const publicKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
+    if (publicKey) {
+      vapiRef.current = new Vapi(publicKey);
 
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false; // Stop after one sentence/pause
-        recognition.interimResults = false;
-        recognition.lang = "en-US";
+      // Event listeners
+      vapiRef.current.on("call-start", () => {
+        console.log("Call started");
+        setCallStatus(CallStatus.ACTIVE);
+      });
 
-        recognition.onstart = () => setIsListening(true);
-        recognition.onend = () => setIsListening(false);
+      vapiRef.current.on("call-end", () => {
+        console.log("Call ended");
+        setCallStatus(CallStatus.FINISHED);
+        setIsSpeaking(false);
+        setIsListening(false);
+      });
 
-        recognition.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          if (transcript) {
-            // Send user speech to Gemini
-            append({ role: "user", content: transcript });
-          }
-        };
+      vapiRef.current.on("speech-start", () => {
+        console.log("AI is speaking");
+        setIsSpeaking(true);
+      });
 
-        recognitionRef.current = recognition;
-      }
+      vapiRef.current.on("speech-end", () => {
+        console.log("AI stopped speaking");
+        setIsSpeaking(false);
+      });
+
+      // Capture messages for transcript
+      vapiRef.current.on("message", (message: any) => {
+        console.log("Message received:", message);
+        
+        if (message.type === "transcript" && message.transcriptType === "final") {
+          const newMessage: SavedMessage = {
+            role: message.role === "user" ? "user" : "assistant",
+            content: message.transcript,
+          };
+          setTranscript((prev) => [...prev, newMessage]);
+        }
+      });
+
+      vapiRef.current.on("volume-level", (level: number) => {
+        // User is speaking when volume level > threshold
+        if (level > 0.01) {
+          setIsListening(true);
+        } else {
+          setIsListening(false);
+        }
+      });
+
+      vapiRef.current.on("error", (error: any) => {
+        console.error("Vapi error:", error);
+      });
     }
-  }, [append]);
+
+    return () => {
+      vapiRef.current?.stop();
+    };
+  }, []);
 
   // Handle Avatar Upload
   const handleAvatarClick = () => {
@@ -89,76 +114,28 @@ const Agent = ({
     }
   };
 
-  // Continuous Conversation Logic
-  useEffect(() => {
-    if (callStatus === CallStatus.ACTIVE && !isSpeaking && !isListening) {
-      const timeoutId = setTimeout(() => {
-          if (recognitionRef.current) {
-            try {
-               recognitionRef.current.start();
-            } catch (e) {
-               // Ignore errors if already started
-            }
-          }
-      }, 500); // Short delay to prevent self-hearing if using speakers
-      return () => clearTimeout(timeoutId);
-    }
-  }, [isSpeaking, callStatus, isListening]);
-
-  // Text to Speech Function
-  const speak = (text: string) => {
-    if (typeof window !== "undefined") {
-      const synth = window.speechSynthesis;
-      const utterance = new SpeechSynthesisUtterance(text);
-      
-      // Attempt to select a "Luxe" female voice (often Google UK Female or similar)
-      const voices = synth.getVoices();
-      const preferredVoice = voices.find(v => 
-        v.name.includes("Google UK English Female") || 
-        v.name.includes("Martha") || 
-        v.name.includes("Female")
-      );
-      if (preferredVoice) utterance.voice = preferredVoice;
-
-      utterance.onstart = () => setIsSpeaking(true);
-      utterance.onend = () => setIsSpeaking(false);
-      
-      synth.speak(utterance);
-    }
-  };
-
   const startInterview = () => {
-    setCallStatus(CallStatus.ACTIVE);
+    const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
     
-    // Initial greeting based on context
-    const initialMessage = `Hello ${userName}. I'm Sarah, your interviewer today. We'll be focusing on ${type} questions. Are you ready to begin?`;
-    
-    // Add to chat history without triggering a new API call yet
-    setMessages([
-        { id: '1', role: 'assistant', content: initialMessage }
-    ]);
-    
-    speak(initialMessage);
-  };
-
-  const handleMicClick = () => {
-    if (recognitionRef.current && !isListening && !isSpeaking) {
-      recognitionRef.current.start();
-    } else if (isSpeaking) {
-        window.speechSynthesis.cancel();
-        setIsSpeaking(false);
+    if (!assistantId) {
+      console.error("Vapi Assistant ID not configured");
+      alert("Vapi is not configured. Please add NEXT_PUBLIC_VAPI_ASSISTANT_ID to .env.local");
+      return;
     }
+
+    // Start Vapi call with assistant ID and custom first message
+    vapiRef.current?.start(
+      assistantId,
+      {
+        // Override the first message
+        firstMessage: "Hello I am assistant developed by elmahdi elahmer so how can i help you today",
+      }
+    );
   };
 
   const endInterview = async () => {
+    vapiRef.current?.stop();
     setCallStatus(CallStatus.FINISHED);
-    window.speechSynthesis.cancel();
-
-    // Map AI SDK messages to our storage format
-    const formattedMessages: SavedMessage[] = messages.map(m => ({
-        role: m.role as "user" | "assistant",
-        content: m.content
-    }));
 
     if (type === "generate") {
       router.push("/");
@@ -166,7 +143,7 @@ const Agent = ({
       const { success, feedbackId: id } = await createFeedback({
         interviewId: interviewId!,
         userId: userId!,
-        transcript: formattedMessages,
+        transcript: transcript,
         feedbackId,
       });
 
@@ -237,8 +214,8 @@ const Agent = ({
       {/* Transcript View */}
       <div className="transcript-border mt-5 h-48 overflow-y-auto">
         <div className="transcript flex flex-col gap-2 !items-start">
-             {messages.length === 0 && <p className="text-white/50 italic">Conversation will appear here...</p>}
-             {messages.slice(-2).map((m, i) => (
+             {transcript.length === 0 && <p className="text-white/50 italic">Conversation will appear here...</p>}
+             {transcript.slice(-2).map((m, i) => (
                  <p key={i} className={cn("text-left", m.role === 'user' ? "text-primary-200" : "text-white")}>
                      <strong>{m.role === 'user' ? 'You' : 'Sarah'}:</strong> {m.content}
                  </p>
@@ -253,15 +230,8 @@ const Agent = ({
           </button>
         ) : callStatus === CallStatus.ACTIVE ? (
            <>
-            <button 
-                className={cn("btn-call !min-w-16", isListening ? "bg-red-500 hover:bg-red-600" : "bg-primary-200 hover:bg-primary-200/80")} 
-                onClick={handleMicClick}
-            >
-                {isListening ? "Listening..." : isSpeaking ? "Stop Speaking" : "Tap to Speak"}
-            </button>
-            
             <button className="btn-disconnect" onClick={endInterview}>
-                End
+                End Interview
             </button>
            </>
         ) : (
