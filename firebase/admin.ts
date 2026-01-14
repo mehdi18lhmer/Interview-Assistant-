@@ -1,61 +1,67 @@
-// MOCK IMPLEMENTATION TO PREVENT CRASH
-// The real firebase-admin module fails to load without valid keys/environment.
-// This allows the UI to render and "fake" auth for demonstration.
+import * as admin from "firebase-admin";
 
-export const auth = {
-  createSessionCookie: async () => "mock-session-cookie",
-  verifySessionCookie: async () => ({
-    uid: "mock-user-id",
-    email: "demo@example.com",
-    name: "Demo User",
-  }),
-  getUserByEmail: async () => ({
-    uid: "mock-user-id",
-    email: "demo@example.com",
-  }),
-} as any;
+const firebaseAdminConfig = {
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+};
 
-export const db = {
-  collection: (name: string) => ({
-    doc: (id: string) => ({
-      get: async () => ({
-        exists: false, // Simulate user not found so new one "creates"
-        id: id || "mock-id",
-        data: () => ({ name: "Demo User" }),
-      }),
-      set: async () => console.log(`[Mock DB] Saved to ${name}/${id}`),
-    }),
-    add: async (data: any) => {
-      console.log(`[Mock DB] Added to ${name}`, data);
-      return { id: "mock-doc-id" };
-    },
-    where: () => ({
-      where: () => ({
-        orderBy: () => ({
-          get: async () => ({ docs: [], empty: true }),
+function initializeFirebaseAdmin() {
+  if (!firebaseAdminConfig.projectId || !firebaseAdminConfig.clientEmail || !firebaseAdminConfig.privateKey) {
+    console.warn("Firebase Admin environment variables are missing. Falling back to mock mode.");
+    
+    // MOCK IMPLEMENTATION FOR DEMO/DEVELOPMENT
+    return {
+      auth: {
+        createSessionCookie: async () => "mock-session-cookie",
+        verifySessionCookie: async () => ({
+          uid: "mock-user-id",
+          email: "demo@example.com",
+          name: "Demo User",
         }),
-        limit: () => ({
-          get: async () => ({ docs: [], empty: true }),
+        getUserByEmail: async () => ({
+          uid: "mock-user-id",
+          email: "demo@example.com",
         }),
-        get: async () => ({ docs: [], empty: true }),
-      }),
-      orderBy: () => ({
-        get: async () => ({ docs: [], empty: true }),
-      }),
-      limit: () => ({
-        get: async () => ({ docs: [], empty: true }),
-      }),
-      get: async () => ({ docs: [], empty: true }),
-    }),
-    orderBy: () => ({
-      where: () => ({
-        where: () => ({
-          limit: () => ({
-            get: async () => ({ docs: [], empty: true }),
+      } as any,
+      db: {
+        collection: (name: string) => ({
+          doc: (id: string) => ({
+            get: async () => ({
+              exists: true,
+              id: id || "mock-id",
+              data: () => ({ name: "Demo User", email: "demo@example.com" }),
+            }),
+            set: async (data: any, options?: any) => {
+              console.log(`[Mock DB] Set ${name}/${id}`, data, options);
+              return { success: true };
+            },
+            update: async (data: any) => {
+              console.log(`[Mock DB] Update ${name}/${id}`, data);
+              return { success: true };
+            },
           }),
+          add: async (data: any) => {
+            console.log(`[Mock DB] Add to ${name}`, data);
+            return { id: "mock-doc-id" };
+          },
         }),
-      }),
-    }),
-  }),
-} as any;
+      } as any,
+    };
+  }
 
+  if (admin.apps.length === 0) {
+    admin.initializeApp({
+      credential: admin.credential.cert(firebaseAdminConfig as any),
+    });
+  }
+
+  return {
+    auth: admin.auth(),
+    db: admin.firestore(),
+  };
+}
+
+const { auth, db } = initializeFirebaseAdmin();
+
+export { auth, db };

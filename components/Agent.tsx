@@ -22,6 +22,7 @@ interface SavedMessage {
 const Agent = ({
   userName,
   userId,
+  profileImage,
   interviewId,
   feedbackId,
   type,
@@ -34,7 +35,7 @@ const Agent = ({
   const [transcript, setTranscript] = useState<SavedMessage[]>([]);
 
   // Avatar Upload State
-  const [avatarUrl, setAvatarUrl] = useState("/user-avatar.png");
+  const [avatarUrl, setAvatarUrl] = useState(profileImage || "/user-avatar.png");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Vapi Instance
@@ -101,17 +102,9 @@ const Agent = ({
     };
   }, []);
 
-  // Handle Avatar Upload
+  // Handle Avatar Click - Redirect to profile
   const handleAvatarClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setAvatarUrl(url);
-    }
+    router.push("/profile");
   };
 
   const startInterview = () => {
@@ -177,15 +170,6 @@ const Agent = ({
         {/* User Profile Card */}
         <div className="card-border">
           <div className="card-content relative group">
-            {/* Hidden File Input */}
-            <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept="image/*"
-                onChange={handleFileChange}
-            />
-            
             {/* Clickable Avatar */}
             <div 
                 className="relative cursor-pointer transition-transform hover:scale-105"
@@ -201,7 +185,7 @@ const Agent = ({
                 
                 {/* Upload Overlay Hint */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                    <span className="text-xs text-white font-bold">Change</span>
+                    <span className="text-xs text-white font-bold">Edit Profile</span>
                 </div>
             </div>
             
