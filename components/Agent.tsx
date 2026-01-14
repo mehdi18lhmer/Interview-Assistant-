@@ -44,6 +44,8 @@ const Agent = ({
   // Initialize Vapi
   useEffect(() => {
     const publicKey = process.env.NEXT_PUBLIC_VAPI_PUBLIC_KEY;
+    console.log("Initializing Vapi with public key:", publicKey ? "EXISTS" : "MISSING");
+    
     if (publicKey) {
       vapiRef.current = new Vapi(publicKey);
 
@@ -112,7 +114,13 @@ const Agent = ({
     
     if (!assistantId) {
       console.error("Vapi Assistant ID not configured");
-      alert("Vapi is not configured. Please add NEXT_PUBLIC_VAPI_ASSISTANT_ID to .env.local");
+      alert("Error: Vapi Assistant ID is missing. Please add NEXT_PUBLIC_VAPI_ASSISTANT_ID to your Vercel Environment Variables.");
+      return;
+    }
+
+    if (!vapiRef.current) {
+      console.error("Vapi not initialized (missing Public Key)");
+      alert("Error: Vapi Public Key is missing. Please add NEXT_PUBLIC_VAPI_PUBLIC_KEY to your Vercel Environment Variables.");
       return;
     }
 
