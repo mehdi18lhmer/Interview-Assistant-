@@ -1,4 +1,5 @@
 import Link from "next/link";
+export const dynamic = "force-dynamic";
 import Image from "next/image";
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
